@@ -27,26 +27,26 @@ function getDistance(loc1, loc2) {
 function App() {
   const [currentPosition, setCurrentPosition] = useState(null);
   const [userPaths, setUserPaths] = useState({});
-  const lastLocation = useRef(null);
   const [userId, setUserId] = useState(null);
+  const lastLocation = useRef(null);
+  const appStartTime = useRef(Date.now());
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUserId(user.uid);
 
-        // Mark user online in /status/{uid}
         const statusRef = ref(database, `status/${user.uid}`);
         set(statusRef, {
           online: true,
           email: user.email
         });
         onDisconnect(statusRef).remove();
-
       } else {
         window.location.href = "/login";
       }
     });
+
     return unsubscribe;
   }, []);
 
@@ -88,13 +88,14 @@ function App() {
   useEffect(() => {
     const pathRef = ref(database, "livePaths");
 
-    return onValue(pathRef, (snapshot) => {
+    const unsubscribe = onValue(pathRef, (snapshot) => {
       const data = snapshot.val() || {};
       const filteredPaths = {};
 
       Object.entries(data).forEach(([uid, pathPoints]) => {
         const userTrail = Object.values(pathPoints)
-          .map((p) => [p.lat, p.lng]);
+          .filter(p => p.timestamp >= appStartTime.current) 
+          .map(p => [p.lat, p.lng]);
 
         if (userTrail.length > 0) {
           filteredPaths[uid] = userTrail;
@@ -103,6 +104,8 @@ function App() {
 
       setUserPaths(filteredPaths);
     });
+
+    return () => unsubscribe();
   }, []);
 
   if (!currentPosition) {
@@ -134,5 +137,3 @@ function App() {
 }
 
 export default App;
-
-
