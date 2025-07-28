@@ -32,7 +32,6 @@ function App() {
   const lastLocation = useRef(null);
   const appStartTime = useRef(Date.now());
 
-  // Set userId, user status, and setup onDisconnect cleanup ONCE
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -59,8 +58,8 @@ function App() {
   useEffect(() => {
     if (!userId) return;
 
-    const MIN_MOVEMENT_DISTANCE = 7; 
-    const MIN_TIME_BETWEEN_UPDATES = 3000; 
+    const MIN_MOVEMENT_DISTANCE = 2; 
+    const MIN_TIME_BETWEEN_UPDATES = 1000; 
 
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
@@ -158,4 +157,3 @@ function App() {
 }
 
 export default App;
-
