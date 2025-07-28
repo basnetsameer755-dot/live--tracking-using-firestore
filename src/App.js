@@ -33,6 +33,7 @@ function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+
       if (user) {
         setUserId(user.uid);
 
@@ -70,6 +71,7 @@ function App() {
         lastLocation.current = newLoc;
 
         const userPathRef = ref(database, `livePaths/${userId}`);
+        onDisconnect(userPathRef).remove();
         push(userPathRef, newLoc);
 
         setCurrentPosition([latitude, longitude]);
