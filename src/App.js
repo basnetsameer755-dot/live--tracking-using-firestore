@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
-import { ref, push, onValue, set, onDisconnect } from "firebase/database";
+import { ref, push, onValue, set, onDisconnect, serverTimestamp } from "firebase/database";
 import { database, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -12,15 +12,14 @@ const blueIcon = new L.Icon({
 });
 
 function getDistance(loc1, loc2) {
-  const R = 6371e3; 
+  const R = 6371e3;
   const toRad = (deg) => (deg * Math.PI) / 180;
   const dLat = toRad(loc2.lat - loc1.lat);
   const dLng = toRad(loc2.lng - loc1.lng);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(loc1.lat)) *
-      Math.cos(toRad(loc2.lat)) *
-      Math.sin(dLng / 2) ** 2;
+    Math.cos(toRad(loc1.lat)) * Math.cos(toRad(loc2.lat)) *
+    Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
@@ -40,7 +39,7 @@ function App() {
         const statusRef = ref(database, `status/${user.uid}`);
         set(statusRef, {
           online: true,
-          email: user.email,
+          email: user.email
         });
         onDisconnect(statusRef).remove();
 
@@ -54,7 +53,6 @@ function App() {
     return unsubscribe;
   }, []);
 
- 
   useEffect(() => {
     if (!userId) return;
 
@@ -64,29 +62,28 @@ function App() {
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
+        const now = Date.now();
+
         const newLoc = {
           lat: latitude,
           lng: longitude,
-          timestamp: Date.now(),
+          timestamp: serverTimestamp() // ✅ use server timestamp
         };
 
         if (lastLocation.current) {
-          const dist = getDistance(lastLocation.current, newLoc);
-          const timeDiff = newLoc.timestamp - lastLocation.current.timestamp;
-
-          if (
-            dist < MIN_MOVEMENT_DISTANCE &&
-            timeDiff < MIN_TIME_BETWEEN_UPDATES
-          ) {
-            return;
-          }
+          const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
+          const timeDiff = now - lastLocation.current.localTime;
+          if (dist < MIN_MOVEMENT_DISTANCE && timeDiff < MIN_TIME_BETWEEN_UPDATES) return;
         }
 
-        lastLocation.current = newLoc;
+        lastLocation.current = {
+          lat: latitude,
+          lng: longitude,
+          localTime: now
+        };
 
         const userPathRef = ref(database, `livePaths/${userId}`);
         push(userPathRef, newLoc);
-
         setCurrentPosition([latitude, longitude]);
       },
       (err) => console.error("GPS Error:", err),
@@ -109,8 +106,8 @@ function App() {
 
       Object.entries(data).forEach(([uid, pathPoints]) => {
         const userTrail = Object.values(pathPoints)
-          .filter((p) => p.timestamp >= appStartTime.current) 
-          .map((p) => [p.lat, p.lng]);
+          .filter((p) => p.lat && p.lng) // filter out incomplete entries
+          .map(p => [p.lat, p.lng]);
 
         if (userTrail.length > 0) {
           filteredPaths[uid] = userTrail;
