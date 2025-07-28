@@ -29,7 +29,6 @@ function App() {
   const [userPaths, setUserPaths] = useState({});
   const [userId, setUserId] = useState(null);
   const lastLocation = useRef(null);
-  const appStartTime = useRef(Date.now());
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -64,12 +63,6 @@ function App() {
         const { latitude, longitude } = position.coords;
         const now = Date.now();
 
-        const newLoc = {
-          lat: latitude,
-          lng: longitude,
-          timestamp: serverTimestamp() // ✅ use server timestamp
-        };
-
         if (lastLocation.current) {
           const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
           const timeDiff = now - lastLocation.current.localTime;
@@ -83,7 +76,13 @@ function App() {
         };
 
         const userPathRef = ref(database, `livePaths/${userId}`);
-        push(userPathRef, newLoc);
+        const newLocRef = push(userPathRef);
+        set(newLocRef, {
+          lat: latitude,
+          lng: longitude,
+          timestamp: serverTimestamp()
+        });
+
         setCurrentPosition([latitude, longitude]);
       },
       (err) => console.error("GPS Error:", err),
@@ -106,7 +105,7 @@ function App() {
 
       Object.entries(data).forEach(([uid, pathPoints]) => {
         const userTrail = Object.values(pathPoints)
-          .filter((p) => p.lat && p.lng) // filter out incomplete entries
+          .filter((p) => p.lat && p.lng)
           .map(p => [p.lat, p.lng]);
 
         if (userTrail.length > 0) {
@@ -154,3 +153,4 @@ function App() {
 }
 
 export default App;
+
