@@ -1,7 +1,16 @@
 import React, { useEffect, useState, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
-import { ref, push, onValue, set, onDisconnect, serverTimestamp } from "firebase/database";
-import { database, auth, onAuthStateChanged } from "./firebase";
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  doc,
+  setDoc,
+  deleteDoc,
+  query,
+  orderBy,
+} from "firebase/firestore";
+import { auth, db, onAuthStateChanged, serverTimestamp } from "./firebase";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
@@ -31,43 +40,49 @@ function App() {
   const [userId, setUserId] = useState(null);
   const lastLocation = useRef(null);
 
+  // Auth + online status
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setUserId(user.uid);
 
-        const statusRef = ref(database, `status/${user.uid}`);
-        set(statusRef, {
+        // Mark user online in Firestore
+        const statusRef = doc(db, "status", user.uid);
+        await setDoc(statusRef, {
           online: true,
           email: user.email,
+          timestamp: serverTimestamp(),
         });
-        onDisconnect(statusRef).remove();
 
-        const userPathRef = ref(database, `livePaths/${user.uid}`);
-        onDisconnect(userPathRef).remove();
+        // Remove status on page close/unload
+        window.addEventListener("beforeunload", async () => {
+          await deleteDoc(statusRef);
+        });
       } else {
         window.location.href = "/login";
       }
     });
 
-    return unsubscribe;
+    return () => unsubscribe();
   }, []);
 
+  // GPS tracking and Firestore writes
   useEffect(() => {
     if (!userId) return;
 
-    const MIN_MOVEMENT_DISTANCE = 2;
-    const MIN_TIME_BETWEEN_UPDATES = 1000;
+    const MIN_MOVEMENT_DISTANCE = 2; // meters
+    const MIN_TIME_BETWEEN_UPDATES = 1000; // ms
 
     const watchId = navigator.geolocation.watchPosition(
-      (position) => {
+      async (position) => {
         const { latitude, longitude } = position.coords;
         const now = Date.now();
 
         if (lastLocation.current) {
           const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
           const timeDiff = now - lastLocation.current.localTime;
-          if (dist < MIN_MOVEMENT_DISTANCE && timeDiff < MIN_TIME_BETWEEN_UPDATES) return;
+          if (dist < MIN_MOVEMENT_DISTANCE && timeDiff < MIN_TIME_BETWEEN_UPDATES)
+            return;
         }
 
         lastLocation.current = {
@@ -76,9 +91,8 @@ function App() {
           localTime: now,
         };
 
-        const userPathRef = ref(database, `livePaths/${userId}`);
-        const newLocRef = push(userPathRef);
-        set(newLocRef, {
+        const userPathRef = collection(db, `livePaths/${userId}/points`);
+        await addDoc(userPathRef, {
           lat: latitude,
           lng: longitude,
           timestamp: serverTimestamp(),
@@ -97,27 +111,33 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userId]);
 
+  // Listen to all live paths in Firestore
   useEffect(() => {
-    const pathRef = ref(database, "livePaths");
+    const unsubscribeSnapshots = [];
 
-    const unsubscribe = onValue(pathRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const filteredPaths = {};
+    const unsubscribe = onSnapshot(collection(db, "livePaths"), (usersSnapshot) => {
+      usersSnapshot.forEach((userDoc) => {
+        const uid = userDoc.id;
+        const pointsColRef = collection(db, `livePaths/${uid}/points`);
+        const q = query(pointsColRef, orderBy("timestamp"));
 
-      Object.entries(data).forEach(([uid, pathPoints]) => {
-        const userTrail = Object.values(pathPoints)
-          .filter((p) => p.lat && p.lng && p.timestamp)
-          .map((p) => p);
+        const unsub = onSnapshot(q, (pointSnap) => {
+          const trail = [];
+          pointSnap.forEach((doc) => {
+            const data = doc.data();
+            if (data.lat && data.lng && data.timestamp) trail.push(data);
+          });
+          setUserPaths((prev) => ({ ...prev, [uid]: trail }));
+        });
 
-        if (userTrail.length > 0) {
-          filteredPaths[uid] = userTrail;
-        }
+        unsubscribeSnapshots.push(unsub);
       });
-
-      setUserPaths(filteredPaths);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      unsubscribeSnapshots.forEach((unsub) => unsub());
+    };
   }, []);
 
   if (!currentPosition) {
@@ -126,12 +146,7 @@ function App() {
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      <MapContainer
-        center={currentPosition}
-        zoom={16}
-        scrollWheelZoom
-        style={{ height: "100%", width: "100%" }}
-      >
+      <MapContainer center={currentPosition} zoom={16} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         {Object.entries(userPaths).map(([uid, trail]) => {
           const last = trail[trail.length - 1];
@@ -141,19 +156,11 @@ function App() {
                 <Popup>
                   🧍 User ID: <b>{uid}</b>
                   <br />
-                  🕒 Time:{" "}
-                  {last.timestamp && typeof last.timestamp === "number"
-                    ? new Date(last.timestamp).toLocaleString()
-                    : "Loading..."}
+                  🕒 Time: {last.timestamp?.toDate().toLocaleString() || "Loading..."}
                 </Popup>
               </Marker>
               {trail.length > 1 && (
-                <Polyline
-                  positions={trail.map((p) => [p.lat, p.lng])}
-                  color="red"
-                  weight={3}
-                  opacity={0.8}
-                />
+                <Polyline positions={trail.map((p) => [p.lat, p.lng])} color="red" weight={3} opacity={0.8} />
               )}
             </React.Fragment>
           );

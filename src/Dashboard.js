@@ -1,16 +1,19 @@
 import React, { useEffect, useState } from "react";
-import { ref, onValue } from "firebase/database";
-import { database } from "./firebase";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "./firebase"; 
 
 function Dashboard() {
   const [users, setUsers] = useState({});
 
   useEffect(() => {
-    const statusRef = ref(database, "status");
+    const statusColRef = collection(db, "status");
 
-    const unsubscribe = onValue(statusRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      setUsers(data);
+    const unsubscribe = onSnapshot(statusColRef, (snapshot) => {
+      const usersData = {};
+      snapshot.forEach((doc) => {
+        usersData[doc.id] = doc.data();
+      });
+      setUsers(usersData);
     });
 
     return () => unsubscribe();
@@ -30,3 +33,4 @@ function Dashboard() {
 }
 
 export default Dashboard;
+
