@@ -18,8 +18,9 @@ function getDistance(loc1, loc2) {
   const dLng = toRad(loc2.lng - loc1.lng);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(loc1.lat)) * Math.cos(toRad(loc2.lat)) *
-    Math.sin(dLng / 2) ** 2;
+    Math.cos(toRad(loc1.lat)) *
+      Math.cos(toRad(loc2.lat)) *
+      Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
@@ -38,7 +39,7 @@ function App() {
         const statusRef = ref(database, `status/${user.uid}`);
         set(statusRef, {
           online: true,
-          email: user.email
+          email: user.email,
         });
         onDisconnect(statusRef).remove();
 
@@ -55,8 +56,8 @@ function App() {
   useEffect(() => {
     if (!userId) return;
 
-    const MIN_MOVEMENT_DISTANCE = 2; 
-    const MIN_TIME_BETWEEN_UPDATES = 1000; 
+    const MIN_MOVEMENT_DISTANCE = 2;
+    const MIN_TIME_BETWEEN_UPDATES = 1000;
 
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
@@ -72,7 +73,7 @@ function App() {
         lastLocation.current = {
           lat: latitude,
           lng: longitude,
-          localTime: now
+          localTime: now,
         };
 
         const userPathRef = ref(database, `livePaths/${userId}`);
@@ -80,7 +81,7 @@ function App() {
         set(newLocRef, {
           lat: latitude,
           lng: longitude,
-          timestamp: serverTimestamp()
+          timestamp: serverTimestamp(),
         });
 
         setCurrentPosition([latitude, longitude]);
@@ -105,8 +106,8 @@ function App() {
 
       Object.entries(data).forEach(([uid, pathPoints]) => {
         const userTrail = Object.values(pathPoints)
-          .filter((p) => p.lat && p.lng)
-          .map(p => [p.lat, p.lng]);
+          .filter((p) => p.lat && p.lng && p.timestamp)
+          .map((p) => p);
 
         if (userTrail.length > 0) {
           filteredPaths[uid] = userTrail;
@@ -136,13 +137,23 @@ function App() {
           const last = trail[trail.length - 1];
           return (
             <React.Fragment key={uid}>
-              <Marker position={last} icon={blueIcon}>
+              <Marker position={[last.lat, last.lng]} icon={blueIcon}>
                 <Popup>
                   🧍 User ID: <b>{uid}</b>
+                  <br />
+                  🕒 Time:{" "}
+                  {last.timestamp && typeof last.timestamp === "number"
+                    ? new Date(last.timestamp).toLocaleString()
+                    : "Loading..."}
                 </Popup>
               </Marker>
               {trail.length > 1 && (
-                <Polyline positions={trail} color="red" weight={3} opacity={0.8} />
+                <Polyline
+                  positions={trail.map((p) => [p.lat, p.lng])}
+                  color="red"
+                  weight={3}
+                  opacity={0.8}
+                />
               )}
             </React.Fragment>
           );
@@ -153,4 +164,5 @@ function App() {
 }
 
 export default App;
+
 
