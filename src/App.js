@@ -65,7 +65,7 @@ function App() {
 
         if (lastLocation.current) {
           const dist = getDistance(lastLocation.current, newLoc);
-          if (dist < 1) return;
+          if (dist < 5) return;
         }
 
         lastLocation.current = newLoc;
