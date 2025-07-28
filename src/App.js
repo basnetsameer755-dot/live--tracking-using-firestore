@@ -14,7 +14,6 @@ import { firestore, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// Custom user icon
 const userIcon = new L.Icon({
   iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
   iconSize: [30, 30],
@@ -40,7 +39,6 @@ function App() {
   const lastLocation = useRef(null);
   const unsubscribes = useRef({});
 
-  // Listen to auth state and update online status
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
