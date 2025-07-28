@@ -14,7 +14,7 @@ import { firestore, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// Custom icon
+// Custom user icon
 const userIcon = new L.Icon({
   iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
   iconSize: [30, 30],
@@ -40,7 +40,7 @@ function App() {
   const lastLocation = useRef(null);
   const unsubscribes = useRef({});
 
-  // Auth setup
+  // Listen to auth state and update online status
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -64,12 +64,12 @@ function App() {
     return unsubscribe;
   }, []);
 
-  // Save GPS position
+  // Watch and save user GPS location to Firestore
   useEffect(() => {
     if (!userId) return;
 
-    const MIN_DISTANCE = 2;
-    const MIN_TIME = 1000;
+    const MIN_DISTANCE = 2; // meters
+    const MIN_TIME = 1000; // milliseconds
 
     const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
@@ -78,8 +78,8 @@ function App() {
 
         if (lastLocation.current) {
           const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
-          const time = now - lastLocation.current.time;
-          if (dist < MIN_DISTANCE && time < MIN_TIME) return;
+          const timeDiff = now - lastLocation.current.time;
+          if (dist < MIN_DISTANCE && timeDiff < MIN_TIME) return;
         }
 
         lastLocation.current = { lat: latitude, lng: longitude, time: now };
@@ -93,20 +93,16 @@ function App() {
         });
       },
       (err) => console.error("Geolocation error:", err),
-      {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 10000,
-      }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userId]);
 
-  // Listen to all users
+  // Listen to all users' location trails
   useEffect(() => {
     const mainRef = collection(firestore, "livePaths");
-    const unsub = onSnapshot(mainRef, (snapshot) => {
+    const unsubscribeMain = onSnapshot(mainRef, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const uid = change.doc.id;
 
@@ -121,32 +117,34 @@ function App() {
           return;
         }
 
-        const q = query(collection(firestore, "livePaths", uid, "locations"), orderBy("timestamp"));
+        const locQuery = query(
+          collection(firestore, "livePaths", uid, "locations"),
+          orderBy("timestamp")
+        );
+
         if (unsubscribes.current[uid]) unsubscribes.current[uid]();
-        unsubscribes.current[uid] = onSnapshot(q, (locSnap) => {
+        unsubscribes.current[uid] = onSnapshot(locQuery, (locSnap) => {
           const path = [];
-          locSnap.forEach((doc) => {
-            const data = doc.data();
-            path.push(data);
-          });
+          locSnap.forEach((doc) => path.push(doc.data()));
           setUserPaths((prev) => ({ ...prev, [uid]: path }));
         });
       });
     });
 
     return () => {
-      unsub();
+      unsubscribeMain();
       Object.values(unsubscribes.current).forEach((fn) => fn());
     };
   }, []);
 
-  if (!currentPosition) return <div>Waiting for GPS...</div>;
+  if (!currentPosition) return <div style={{ padding: 20 }}>Waiting for GPS location...</div>;
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
       <MapContainer center={currentPosition} zoom={16} style={{ height: "100%", width: "100%" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
+        {/* Show all users' trails and last locations */}
         {Object.entries(userPaths).map(([uid, trail]) => {
           if (!trail.length) return null;
           const last = trail[trail.length - 1];
@@ -157,7 +155,9 @@ function App() {
                   <b>🧍 User ID:</b> {uid}
                   <br />
                   <b>🕒 Time:</b>{" "}
-                  {last.timestamp?.toDate ? last.timestamp.toDate().toLocaleString() : "N/A"}
+                  {last.timestamp?.toDate
+                    ? last.timestamp.toDate().toLocaleString()
+                    : "Loading..."}
                 </Popup>
               </Marker>
               {trail.length > 1 && (
@@ -172,13 +172,13 @@ function App() {
           );
         })}
 
-        {/* Your current marker */}
+        {/* Current user position marker */}
         <Marker position={currentPosition} icon={userIcon}>
-           <Popup>
-    🧍 User ID: <b>{userId}</b>
-    <br />
-    🕒 Time: <b>{new Date().toLocaleString()}</b>
-  </Popup>
+          <Popup>
+            🧍 User ID: <b>{userId}</b>
+            <br />
+            🕒 Time: <b>{new Date().toLocaleString()}</b>
+          </Popup>
         </Marker>
       </MapContainer>
     </div>
@@ -186,6 +186,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
