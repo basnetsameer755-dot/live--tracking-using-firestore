@@ -1,16 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
-import {
-  collection,
-  addDoc,
-  onSnapshot,
-  doc,
-  setDoc,
-  deleteDoc,
-  query,
-  orderBy,
-} from "firebase/firestore";
-import { auth, db, onAuthStateChanged, serverTimestamp } from "./firebase";
+import { ref, push, onValue, set, onDisconnect, serverTimestamp } from "firebase/database";
+import { database, auth, onAuthStateChanged } from "./firebase";  // make sure database is exported in firebase.js
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
@@ -40,33 +31,30 @@ function App() {
   const [userId, setUserId] = useState(null);
   const lastLocation = useRef(null);
 
-  // Auth + online status
+  // Auth and online status
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUserId(user.uid);
 
-        // Mark user online in Firestore
-        const statusRef = doc(db, "status", user.uid);
-        await setDoc(statusRef, {
+        const statusRef = ref(database, `status/${user.uid}`);
+        set(statusRef, {
           online: true,
           email: user.email,
-          timestamp: serverTimestamp(),
         });
+        onDisconnect(statusRef).remove();
 
-        // Remove status on page close/unload
-        window.addEventListener("beforeunload", async () => {
-          await deleteDoc(statusRef);
-        });
+        const userPathRef = ref(database, `livePaths/${user.uid}`);
+        onDisconnect(userPathRef).remove();
       } else {
         window.location.href = "/login";
       }
     });
 
-    return () => unsubscribe();
+    return unsubscribe;
   }, []);
 
-  // GPS tracking and Firestore writes
+  // GPS tracking and pushing location to Firebase Realtime DB
   useEffect(() => {
     if (!userId) return;
 
@@ -74,15 +62,14 @@ function App() {
     const MIN_TIME_BETWEEN_UPDATES = 1000; // ms
 
     const watchId = navigator.geolocation.watchPosition(
-      async (position) => {
+      (position) => {
         const { latitude, longitude } = position.coords;
         const now = Date.now();
 
         if (lastLocation.current) {
           const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
           const timeDiff = now - lastLocation.current.localTime;
-          if (dist < MIN_MOVEMENT_DISTANCE && timeDiff < MIN_TIME_BETWEEN_UPDATES)
-            return;
+          if (dist < MIN_MOVEMENT_DISTANCE && timeDiff < MIN_TIME_BETWEEN_UPDATES) return;
         }
 
         lastLocation.current = {
@@ -91,8 +78,9 @@ function App() {
           localTime: now,
         };
 
-        const userPathRef = collection(db, `livePaths/${userId}/points`);
-        await addDoc(userPathRef, {
+        const userPathRef = ref(database, `livePaths/${userId}`);
+        const newLocRef = push(userPathRef);
+        set(newLocRef, {
           lat: latitude,
           lng: longitude,
           timestamp: serverTimestamp(),
@@ -111,33 +99,28 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userId]);
 
-  // Listen to all live paths in Firestore
+  // Listen to all users' livePaths in Realtime DB
   useEffect(() => {
-    const unsubscribeSnapshots = [];
+    const pathRef = ref(database, "livePaths");
 
-    const unsubscribe = onSnapshot(collection(db, "livePaths"), (usersSnapshot) => {
-      usersSnapshot.forEach((userDoc) => {
-        const uid = userDoc.id;
-        const pointsColRef = collection(db, `livePaths/${uid}/points`);
-        const q = query(pointsColRef, orderBy("timestamp"));
+    const unsubscribe = onValue(pathRef, (snapshot) => {
+      const data = snapshot.val() || {};
+      const filteredPaths = {};
 
-        const unsub = onSnapshot(q, (pointSnap) => {
-          const trail = [];
-          pointSnap.forEach((doc) => {
-            const data = doc.data();
-            if (data.lat && data.lng && data.timestamp) trail.push(data);
-          });
-          setUserPaths((prev) => ({ ...prev, [uid]: trail }));
-        });
+      Object.entries(data).forEach(([uid, pathPoints]) => {
+        const userTrail = Object.values(pathPoints)
+          .filter((p) => p.lat && p.lng && p.timestamp)
+          .map((p) => p);
 
-        unsubscribeSnapshots.push(unsub);
+        if (userTrail.length > 0) {
+          filteredPaths[uid] = userTrail;
+        }
       });
+
+      setUserPaths(filteredPaths);
     });
 
-    return () => {
-      unsubscribe();
-      unsubscribeSnapshots.forEach((unsub) => unsub());
-    };
+    return () => unsubscribe();
   }, []);
 
   if (!currentPosition) {
@@ -156,7 +139,10 @@ function App() {
                 <Popup>
                   🧍 User ID: <b>{uid}</b>
                   <br />
-                  🕒 Time: {last.timestamp?.toDate().toLocaleString() || "Loading..."}
+                  🕒 Time:{" "}
+                  {typeof last.timestamp === "object" && last.timestamp.hasOwnProperty("toMillis")
+                    ? new Date(last.timestamp.toMillis()).toLocaleString()
+                    : new Date(last.timestamp).toLocaleString()}
                 </Popup>
               </Marker>
               {trail.length > 1 && (
@@ -171,5 +157,6 @@ function App() {
 }
 
 export default App;
+
 
 
