@@ -20,6 +20,18 @@ const userIcon = new L.Icon({
   iconAnchor: [15, 15],
 });
 
+function getDistance(loc1, loc2) {
+  const R = 6371e3;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(loc2.lat - loc1.lat);
+  const dLng = toRad(loc2.lng - loc1.lng);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(loc1.lat)) * Math.cos(toRad(loc2.lat)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 function App() {
   const [userId, setUserId] = useState(null);
   const [currentPosition, setCurrentPosition] = useState(null);
@@ -59,9 +71,21 @@ function App() {
   useEffect(() => {
     if (!userId || !authChecked) return;
 
+    const MIN_DISTANCE = 2; // meters
+    const MIN_TIME = 1000; // milliseconds
+
     const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
         const { latitude, longitude } = pos.coords;
+        const now = Date.now();
+
+        if (lastLocation.current) {
+          const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
+          const timeDiff = now - lastLocation.current.time;
+          if (dist < MIN_DISTANCE && timeDiff < MIN_TIME) return;
+        }
+
+        lastLocation.current = { lat: latitude, lng: longitude, time: now };
         setCurrentPosition([latitude, longitude]);
 
         try {
@@ -76,7 +100,7 @@ function App() {
         }
       },
       (err) => console.error("Geolocation error:", err),
-      { enableHighAccuracy: true }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
@@ -127,7 +151,12 @@ function App() {
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      <MapContainer center={currentPosition} zoom={16} style={{ height: "100%", width: "100%" }}>
+      <MapContainer 
+        center={currentPosition} 
+        zoom={16} 
+        style={{ height: "100%", width: "100%" }}
+        scrollWheelZoom
+      >
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {Object.entries(userPaths).map(([uid, trail]) => {
@@ -135,13 +164,17 @@ function App() {
           if (validTrail.length < 1) return null;
           
           const last = validTrail[validTrail.length - 1];
+          const isCurrentUser = uid === userId;
+          
           return (
             <React.Fragment key={uid}>
               <Marker position={[last.lat, last.lng]} icon={userIcon}>
                 <Popup>
-                  <b>User ID:</b> {uid}
+                  🧍 User ID: <b>{uid}</b>
+                  {isCurrentUser && <span> (You)</span>}
                   <br />
-                  <b>Time:</b> {last.timestamp?.toLocaleString?.() || "Loading..."}
+                  🕒 Time:{" "}
+                  {last.timestamp?.toLocaleString?.() || "Loading..."}
                 </Popup>
               </Marker>
               {validTrail.length > 1 && (
@@ -149,20 +182,12 @@ function App() {
                   positions={validTrail.map((p) => [p.lat, p.lng])}
                   color="red"
                   weight={3}
-                  opacity={0.7}
+                  opacity={0.8}
                 />
               )}
             </React.Fragment>
           );
         })}
-
-        <Marker position={currentPosition} icon={userIcon}>
-          <Popup>
-            User ID: <b>{userId}</b>
-            <br />
-            Time: <b>{new Date().toLocaleString()}</b>
-          </Popup>
-        </Marker>
       </MapContainer>
     </div>
   );
