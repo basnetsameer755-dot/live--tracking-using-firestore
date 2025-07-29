@@ -8,6 +8,7 @@ import {
   onSnapshot,
   query,
   orderBy,
+  serverTimestamp
 } from "firebase/firestore";
 import { firestore, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
@@ -19,41 +20,35 @@ const userIcon = new L.Icon({
   iconAnchor: [15, 15],
 });
 
-function getDistance(loc1, loc2) {
-  const R = 6371e3;
-  const toRad = (deg) => (deg * Math.PI) / 180;
-  const dLat = toRad(loc2.lat - loc1.lat);
-  const dLng = toRad(loc2.lng - loc1.lng);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(loc1.lat)) * Math.cos(toRad(loc2.lat)) * Math.sin(dLng / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
 function App() {
   const [userId, setUserId] = useState(null);
   const [currentPosition, setCurrentPosition] = useState(null);
   const [userPaths, setUserPaths] = useState({});
+  const [authChecked, setAuthChecked] = useState(false);
   const lastLocation = useRef(null);
-  const unsubscribes = useRef({});
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setUserId(user.uid);
-        const statusRef = doc(firestore, "status", user.uid);
-        await setDoc(statusRef, {
-          email: user.email,
-          online: true,
-          lastOnline: new Date(),
-        });
-        window.addEventListener("beforeunload", () => {
-          setDoc(statusRef, {
-            online: false,
-            lastOnline: new Date(),
+        try {
+          const statusRef = doc(firestore, "status", user.uid);
+          await setDoc(statusRef, {
+            email: user.email,
+            online: true,
+            lastOnline: serverTimestamp(),
+          }, { merge: true });
+          
+          window.addEventListener("beforeunload", () => {
+            setDoc(statusRef, {
+              online: false,
+              lastOnline: serverTimestamp(),
+            }, { merge: true });
           });
-        });
+        } catch (error) {
+          console.error("Error updating status:", error);
+        }
+        setAuthChecked(true);
       } else {
         window.location.href = "/login";
       }
@@ -62,80 +57,73 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!userId) return;
-
-    const MIN_DISTANCE = 2;
-    const MIN_TIME = 1000;
+    if (!userId || !authChecked) return;
 
     const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
         const { latitude, longitude } = pos.coords;
-        const now = Date.now();
-
-        if (lastLocation.current) {
-          const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
-          const timeDiff = now - lastLocation.current.time;
-          if (dist < MIN_DISTANCE && timeDiff < MIN_TIME) return;
-        }
-
-        lastLocation.current = { lat: latitude, lng: longitude, time: now };
         setCurrentPosition([latitude, longitude]);
 
-        const locRef = collection(firestore, "livePaths", userId, "locations");
-        await addDoc(locRef, {
-          lat: latitude,
-          lng: longitude,
-          timestamp: new Date(), // ✅ use local time to ensure it works
-        });
+        try {
+          await addDoc(collection(firestore, "locations"), {
+            userId,
+            lat: latitude,
+            lng: longitude,
+            timestamp: serverTimestamp()
+          });
+        } catch (error) {
+          console.error("Error adding location:", error);
+        }
       },
       (err) => console.error("Geolocation error:", err),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      { enableHighAccuracy: true }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [userId]);
+  }, [userId, authChecked]);
 
   useEffect(() => {
-    const mainRef = collection(firestore, "livePaths");
-    const unsubscribeMain = onSnapshot(mainRef, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        const uid = change.doc.id;
+    if (!authChecked) return;
 
-        if (change.type === "removed") {
-          if (unsubscribes.current[uid]) unsubscribes.current[uid]();
-          delete unsubscribes.current[uid];
-          setUserPaths((prev) => {
-            const copy = { ...prev };
-            delete copy[uid];
-            return copy;
+    const q = query(
+      collection(firestore, "locations"),
+      orderBy("timestamp")
+    );
+
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        const paths = {};
+        snapshot.docs.forEach((doc) => {
+          const data = doc.data();
+          if (!data.userId) return;
+          
+          if (!paths[data.userId]) {
+            paths[data.userId] = [];
+          }
+          
+          paths[data.userId].push({
+            lat: data.lat,
+            lng: data.lng,
+            timestamp: data.timestamp?.toDate?.() || new Date()
           });
-          return;
-        }
-
-        const locQuery = query(
-          collection(firestore, "livePaths", uid, "locations"),
-          orderBy("timestamp")
-        );
-
-        if (unsubscribes.current[uid]) unsubscribes.current[uid]();
-        unsubscribes.current[uid] = onSnapshot(locQuery, (locSnap) => {
-          const path = [];
-          locSnap.forEach((doc) => {
-            const data = doc.data();
-            if (data.timestamp) path.push(data); // ✅ skip invalid points
-          });
-          setUserPaths((prev) => ({ ...prev, [uid]: path }));
         });
-      });
-    });
+        setUserPaths(paths);
+      },
+      (error) => {
+        console.error("Firestore error:", error);
+      }
+    );
 
-    return () => {
-      unsubscribeMain();
-      Object.values(unsubscribes.current).forEach((fn) => fn());
-    };
-  }, []);
+    return unsubscribe;
+  }, [authChecked]);
 
-  if (!currentPosition) return <div style={{ padding: 20 }}>Waiting for GPS location...</div>;
+  if (!authChecked) {
+    return <div style={{ padding: 20 }}>Checking authentication...</div>;
+  }
+
+  if (!currentPosition) {
+    return <div style={{ padding: 20 }}>Waiting for GPS location...</div>;
+  }
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
@@ -143,21 +131,22 @@ function App() {
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {Object.entries(userPaths).map(([uid, trail]) => {
-          if (!trail.length) return null;
-          const last = trail[trail.length - 1];
+          const validTrail = trail.filter(p => p.lat && p.lng);
+          if (validTrail.length < 1) return null;
+          
+          const last = validTrail[validTrail.length - 1];
           return (
             <React.Fragment key={uid}>
               <Marker position={[last.lat, last.lng]} icon={userIcon}>
                 <Popup>
-                  <b>🧍 User ID:</b> {uid}
+                  <b>User ID:</b> {uid}
                   <br />
-                  <b>🕒 Time:</b>{" "}
-                  {last.timestamp?.toLocaleString?.() || "Loading..."}
+                  <b>Time:</b> {last.timestamp?.toLocaleString?.() || "Loading..."}
                 </Popup>
               </Marker>
-              {trail.length > 1 && (
+              {validTrail.length > 1 && (
                 <Polyline
-                  positions={trail.map((p) => [p.lat, p.lng])}
+                  positions={validTrail.map((p) => [p.lat, p.lng])}
                   color="red"
                   weight={3}
                   opacity={0.7}
@@ -169,9 +158,9 @@ function App() {
 
         <Marker position={currentPosition} icon={userIcon}>
           <Popup>
-            🧍 User ID: <b>{userId}</b>
+            User ID: <b>{userId}</b>
             <br />
-            🕒 Time: <b>{new Date().toLocaleString()}</b>
+            Time: <b>{new Date().toLocaleString()}</b>
           </Popup>
         </Marker>
       </MapContainer>
@@ -180,7 +169,6 @@ function App() {
 }
 
 export default App;
-
 
 
 
