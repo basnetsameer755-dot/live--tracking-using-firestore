@@ -62,12 +62,11 @@ function App() {
     return unsubscribe;
   }, []);
 
-  // Watch and save user GPS location to Firestore
   useEffect(() => {
     if (!userId) return;
 
-    const MIN_DISTANCE = 2; // meters
-    const MIN_TIME = 1000; // milliseconds
+    const MIN_DISTANCE = 2; 
+    const MIN_TIME = 1000; 
 
     const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
@@ -97,7 +96,6 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userId]);
 
-  // Listen to all users' location trails
   useEffect(() => {
     const mainRef = collection(firestore, "livePaths");
     const unsubscribeMain = onSnapshot(mainRef, (snapshot) => {
@@ -122,9 +120,14 @@ function App() {
 
         if (unsubscribes.current[uid]) unsubscribes.current[uid]();
         unsubscribes.current[uid] = onSnapshot(locQuery, (locSnap) => {
-          const path = [];
-          locSnap.forEach((doc) => path.push(doc.data()));
-          setUserPaths((prev) => ({ ...prev, [uid]: path }));
+          const trail = [];
+          locSnap.forEach((doc) => {
+            const data = doc.data();
+            if (data.lat && data.lng && data.timestamp) {
+              trail.push(data);
+            }
+          });
+          setUserPaths((prev) => ({ ...prev, [uid]: trail }));
         });
       });
     });
