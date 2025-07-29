@@ -30,19 +30,25 @@ function getDistance(loc1, loc2) {
 function App() {
   const [currentPosition, setCurrentPosition] = useState(null);
   const [currentTimestamp, setCurrentTimestamp] = useState(null);
+
+  // Trail of GPS positions (live updates)
+  const [liveTrail, setLiveTrail] = useState([]);
+
+  // Manual markers trail
   const [manualTrail, setManualTrail] = useState([]);
   const [inputLat, setInputLat] = useState("");
   const [inputLng, setInputLng] = useState("");
   const lastLocation = useRef(null);
 
+  // Watch live GPS and update liveTrail on movement
   useEffect(() => {
     if (!navigator.geolocation) {
       alert("Geolocation is not supported by your browser");
       return;
     }
 
-    const MIN_DISTANCE = 2;
-    const MIN_TIME = 1000;
+    const MIN_DISTANCE = 2; // meters
+    const MIN_TIME = 1000;   // ms
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
@@ -52,12 +58,16 @@ function App() {
         if (lastLocation.current) {
           const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
           const timeDiff = now - lastLocation.current.time;
-          if (dist < MIN_DISTANCE && timeDiff < MIN_TIME) return;
+          if (dist < MIN_DISTANCE && timeDiff < MIN_TIME) return; // Ignore small moves
         }
 
         lastLocation.current = { lat: latitude, lng: longitude, time: now };
+
         setCurrentPosition([latitude, longitude]);
         setCurrentTimestamp(new Date(now));
+
+        // Append new position to liveTrail (live GPS path)
+        setLiveTrail((prev) => [...prev, { lat: latitude, lng: longitude, timestamp: new Date(now) }]);
       },
       (err) => {
         console.error(err);
@@ -69,6 +79,7 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
+  // Add new manual marker from input fields
   function handleAddLocation() {
     const lat = parseFloat(inputLat);
     const lng = parseFloat(inputLng);
@@ -86,7 +97,7 @@ function App() {
     setInputLng("");
   }
 
-  // Handle dragging manual markers to update their location and timestamp
+  // Update manual marker position & timestamp on drag end
   function onManualMarkerDrag(index, event) {
     const { lat, lng } = event.target.getLatLng();
     setManualTrail((prev) => {
@@ -96,11 +107,8 @@ function App() {
     });
   }
 
-  const mapCenter =
-    currentPosition ||
-    (manualTrail.length > 0
-      ? [manualTrail[manualTrail.length - 1].lat, manualTrail[manualTrail.length - 1].lng]
-      : [27.7, 85.3]);
+  // Choose map center - current position or fallback
+  const mapCenter = currentPosition || (manualTrail.length > 0 ? [manualTrail[manualTrail.length - 1].lat, manualTrail[manualTrail.length - 1].lng] : [27.7, 85.3]);
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
@@ -123,7 +131,7 @@ function App() {
       <MapContainer center={mapCenter} zoom={16} style={{ height: "90%", width: "100%" }} scrollWheelZoom>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
-        {/* Current position marker */}
+        {/* Current live GPS marker */}
         {currentPosition && currentTimestamp && (
           <Marker position={currentPosition} icon={currentUserIcon} draggable={false}>
             <Popup>
@@ -136,7 +144,17 @@ function App() {
           </Marker>
         )}
 
-        {/* Manual markers - draggable and update on move */}
+        {/* Polyline showing live GPS trail in red */}
+        {liveTrail.length > 1 && (
+          <Polyline
+            positions={liveTrail.map(p => [p.lat, p.lng])}
+            color="red"
+            weight={3}
+            opacity={0.8}
+          />
+        )}
+
+        {/* Manual markers */}
         {manualTrail.map((pos, idx) => (
           <Marker
             key={idx}
@@ -157,7 +175,7 @@ function App() {
           </Marker>
         ))}
 
-        {/* Draw polyline connecting manual markers */}
+        {/* Polyline showing manual markers trail in red */}
         {manualTrail.length > 1 && (
           <Polyline
             positions={manualTrail.map((p) => [p.lat, p.lng])}
@@ -172,6 +190,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
