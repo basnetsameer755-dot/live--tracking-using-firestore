@@ -40,7 +40,7 @@ function App() {
   const [userPaths, setUserPaths] = useState({});
   const lastLocation = useRef(null);
 
-  // Handle auth & online status
+  // Handle login status
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -65,12 +65,12 @@ function App() {
     return unsubscribe;
   }, []);
 
-  // Watch user position and add to Firestore collection
+  // Watch and save user location
   useEffect(() => {
     if (!userId) return;
 
     const MIN_DISTANCE = 2; // meters
-    const MIN_TIME = 1000; // ms
+    const MIN_TIME = 1000; // milliseconds
 
     const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
@@ -100,7 +100,7 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userId]);
 
-  // Listen to all users’ location trails in Firestore
+  // Fetch location trails for all users
   useEffect(() => {
     const mainRef = collection(firestore, "livePaths");
 
@@ -131,7 +131,7 @@ function App() {
           const trail = [];
           locSnap.forEach((doc) => {
             const data = doc.data();
-            if (data.lat && data.lng && data.timestamp) {
+            if (data.lat && data.lng) {
               trail.push(data);
             }
           });
@@ -150,14 +150,16 @@ function App() {
     return <div style={{ padding: 20 }}>Waiting for GPS location...</div>;
   }
 
-  return (
+   return (
     <div style={{ height: "100vh", width: "100vw" }}>
       <MapContainer center={currentPosition} zoom={16} style={{ height: "100%", width: "100%" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
+        {/* All users' markers and trails */}
         {Object.entries(userPaths).map(([uid, trail]) => {
           if (!trail.length) return null;
           const last = trail[trail.length - 1];
+
           return (
             <React.Fragment key={uid}>
               <Marker position={[last.lat, last.lng]} icon={blueIcon}>
@@ -175,20 +177,12 @@ function App() {
                   positions={trail.map((p) => [p.lat, p.lng])}
                   color="red"
                   weight={3}
-                  opacity={0.7}
+                  opacity={0.8}
                 />
               )}
             </React.Fragment>
           );
         })}
-
-        <Marker position={currentPosition} icon={blueIcon}>
-          <Popup>
-            🧍 User ID: <b>{userId}</b>
-            <br />
-            🕒 Time: <b>{new Date().toLocaleString()}</b>
-          </Popup>
-        </Marker>
       </MapContainer>
     </div>
   );
