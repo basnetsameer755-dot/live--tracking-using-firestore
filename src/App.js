@@ -176,21 +176,20 @@ function App() {
           const last = validTrail[validTrail.length - 1];
           const isCurrentUser = uid === userId;
 
-          return (
-            <React.Fragment key={uid}>
-              <Marker position={[last.lat, last.lng]} icon={userIcon}>
-                <Popup>
-                  🧍 User ID: <b>{uid}</b>
-                  {isCurrentUser && <span> (You)</span>}
-                  <br />
-                  🕒 Time: {last.timestamp?.toLocaleString() || "Loading..."}
-                </Popup>
-              </Marker>
-              {validTrail.length > 1 && (
-                <Polyline positions={validTrail.map((p) => [p.lat, p.lng])} color="red" weight={3} opacity={0.8} />
-              )}
-            </React.Fragment>
-          );
+return (
+  <React.Fragment key={uid}>
+    <Marker position={[last.lat, last.lng]} icon={userIcon}>
+      <Popup>
+        🧍 User ID: <b>{uid}</b>
+        <br />
+        🕒 Time: {last.timestamp?.toLocaleString() || "Loading..."}
+      </Popup>
+    </Marker>
+    {validTrail.length > 1 && (
+      <Polyline positions={validTrail.map((p) => [p.lat, p.lng])} color="red" weight={3} opacity={0.8} />
+    )}
+  </React.Fragment>
+);
         })}
       </MapContainer>
     </div>
