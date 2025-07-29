@@ -1,4 +1,4 @@
- import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
 import {
   collection,
@@ -8,7 +8,6 @@ import {
   onSnapshot,
   query,
   orderBy,
-  serverTimestamp,
 } from "firebase/firestore";
 import { firestore, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
@@ -47,12 +46,12 @@ function App() {
         await setDoc(statusRef, {
           email: user.email,
           online: true,
-          lastOnline: serverTimestamp(),
+          lastOnline: new Date(),
         });
         window.addEventListener("beforeunload", () => {
           setDoc(statusRef, {
             online: false,
-            lastOnline: serverTimestamp(),
+            lastOnline: new Date(),
           });
         });
       } else {
@@ -62,12 +61,11 @@ function App() {
     return unsubscribe;
   }, []);
 
-  // Watch and save user GPS location to Firestore
   useEffect(() => {
     if (!userId) return;
 
-    const MIN_DISTANCE = 2; // meters
-    const MIN_TIME = 1000; // milliseconds
+    const MIN_DISTANCE = 2;
+    const MIN_TIME = 1000;
 
     const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
@@ -87,7 +85,7 @@ function App() {
         await addDoc(locRef, {
           lat: latitude,
           lng: longitude,
-          timestamp: serverTimestamp(),
+          timestamp: new Date(), // ✅ use local time to ensure it works
         });
       },
       (err) => console.error("Geolocation error:", err),
@@ -97,7 +95,6 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userId]);
 
-  // Listen to all users' location trails
   useEffect(() => {
     const mainRef = collection(firestore, "livePaths");
     const unsubscribeMain = onSnapshot(mainRef, (snapshot) => {
@@ -123,7 +120,10 @@ function App() {
         if (unsubscribes.current[uid]) unsubscribes.current[uid]();
         unsubscribes.current[uid] = onSnapshot(locQuery, (locSnap) => {
           const path = [];
-          locSnap.forEach((doc) => path.push(doc.data()));
+          locSnap.forEach((doc) => {
+            const data = doc.data();
+            if (data.timestamp) path.push(data); // ✅ skip invalid points
+          });
           setUserPaths((prev) => ({ ...prev, [uid]: path }));
         });
       });
@@ -142,7 +142,6 @@ function App() {
       <MapContainer center={currentPosition} zoom={16} style={{ height: "100%", width: "100%" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
-        {/* Show all users' trails and last locations */}
         {Object.entries(userPaths).map(([uid, trail]) => {
           if (!trail.length) return null;
           const last = trail[trail.length - 1];
@@ -153,9 +152,7 @@ function App() {
                   <b>🧍 User ID:</b> {uid}
                   <br />
                   <b>🕒 Time:</b>{" "}
-                  {last.timestamp?.toDate
-                    ? last.timestamp.toDate().toLocaleString()
-                    : "Loading..."}
+                  {last.timestamp?.toLocaleString?.() || "Loading..."}
                 </Popup>
               </Marker>
               {trail.length > 1 && (
@@ -170,7 +167,6 @@ function App() {
           );
         })}
 
-        {/* Current user position marker */}
         <Marker position={currentPosition} icon={userIcon}>
           <Popup>
             🧍 User ID: <b>{userId}</b>
@@ -184,6 +180,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
