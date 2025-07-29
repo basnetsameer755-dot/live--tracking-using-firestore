@@ -142,7 +142,6 @@ function App() {
       <MapContainer center={currentPosition} zoom={16} style={{ height: "100%", width: "100%" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
-        {/* Show all users' trails and last locations */}
         {Object.entries(userPaths).map(([uid, trail]) => {
           if (!trail.length) return null;
           const last = trail[trail.length - 1];
@@ -170,7 +169,6 @@ function App() {
           );
         })}
 
-        {/* Current user position marker */}
         <Marker position={currentPosition} icon={userIcon}>
           <Popup>
             🧍 User ID: <b>{userId}</b>
