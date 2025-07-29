@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
 import {
-  collectionGroup,
-  addDoc,
+  collection,
   doc,
+  addDoc,
   setDoc,
   onSnapshot,
   query,
   orderBy,
   serverTimestamp,
 } from "firebase/firestore";
+
 import { firestore, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
