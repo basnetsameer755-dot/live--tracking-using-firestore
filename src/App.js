@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+ import React, { useEffect, useState, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
 import {
   collection,
@@ -14,7 +14,7 @@ import { firestore, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-const blueIcon = new L.Icon({
+const userIcon = new L.Icon({
   iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
   iconSize: [30, 30],
   iconAnchor: [15, 15],
@@ -27,9 +27,7 @@ function getDistance(loc1, loc2) {
   const dLng = toRad(loc2.lng - loc1.lng);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(loc1.lat)) *
-      Math.cos(toRad(loc2.lat)) *
-      Math.sin(dLng / 2) ** 2;
+    Math.cos(toRad(loc1.lat)) * Math.cos(toRad(loc2.lat)) * Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
@@ -39,8 +37,8 @@ function App() {
   const [currentPosition, setCurrentPosition] = useState(null);
   const [userPaths, setUserPaths] = useState({});
   const lastLocation = useRef(null);
+  const unsubscribes = useRef({});
 
-  // Handle login status
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -61,11 +59,10 @@ function App() {
         window.location.href = "/login";
       }
     });
-
     return unsubscribe;
   }, []);
 
-  // Watch and save user location
+  // Watch and save user GPS location to Firestore
   useEffect(() => {
     if (!userId) return;
 
@@ -100,19 +97,16 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userId]);
 
-  // Fetch location trails for all users
+  // Listen to all users' location trails
   useEffect(() => {
     const mainRef = collection(firestore, "livePaths");
-
-    const unsubscribes = {};
-
     const unsubscribeMain = onSnapshot(mainRef, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const uid = change.doc.id;
 
         if (change.type === "removed") {
-          if (unsubscribes[uid]) unsubscribes[uid]();
-          delete unsubscribes[uid];
+          if (unsubscribes.current[uid]) unsubscribes.current[uid]();
+          delete unsubscribes.current[uid];
           setUserPaths((prev) => {
             const copy = { ...prev };
             delete copy[uid];
@@ -126,47 +120,39 @@ function App() {
           orderBy("timestamp")
         );
 
-        if (unsubscribes[uid]) unsubscribes[uid]();
-        unsubscribes[uid] = onSnapshot(locQuery, (locSnap) => {
-          const trail = [];
-          locSnap.forEach((doc) => {
-            const data = doc.data();
-            if (data.lat && data.lng) {
-              trail.push(data);
-            }
-          });
-          setUserPaths((prev) => ({ ...prev, [uid]: trail }));
+        if (unsubscribes.current[uid]) unsubscribes.current[uid]();
+        unsubscribes.current[uid] = onSnapshot(locQuery, (locSnap) => {
+          const path = [];
+          locSnap.forEach((doc) => path.push(doc.data()));
+          setUserPaths((prev) => ({ ...prev, [uid]: path }));
         });
       });
     });
 
     return () => {
       unsubscribeMain();
-      Object.values(unsubscribes).forEach((fn) => fn());
+      Object.values(unsubscribes.current).forEach((fn) => fn());
     };
   }, []);
 
-  if (!currentPosition) {
-    return <div style={{ padding: 20 }}>Waiting for GPS location...</div>;
-  }
+  if (!currentPosition) return <div style={{ padding: 20 }}>Waiting for GPS location...</div>;
 
-   return (
+  return (
     <div style={{ height: "100vh", width: "100vw" }}>
       <MapContainer center={currentPosition} zoom={16} style={{ height: "100%", width: "100%" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
-        {/* All users' markers and trails */}
+        {/* Show all users' trails and last locations */}
         {Object.entries(userPaths).map(([uid, trail]) => {
           if (!trail.length) return null;
           const last = trail[trail.length - 1];
-
           return (
             <React.Fragment key={uid}>
-              <Marker position={[last.lat, last.lng]} icon={blueIcon}>
+              <Marker position={[last.lat, last.lng]} icon={userIcon}>
                 <Popup>
-                  🧍 User ID: <b>{uid}</b>
+                  <b>🧍 User ID:</b> {uid}
                   <br />
-                  🕒 Time:{" "}
+                  <b>🕒 Time:</b>{" "}
                   {last.timestamp?.toDate
                     ? last.timestamp.toDate().toLocaleString()
                     : "Loading..."}
@@ -177,18 +163,28 @@ function App() {
                   positions={trail.map((p) => [p.lat, p.lng])}
                   color="red"
                   weight={3}
-                  opacity={0.8}
+                  opacity={0.7}
                 />
               )}
             </React.Fragment>
           );
         })}
+
+        {/* Current user position marker */}
+        <Marker position={currentPosition} icon={userIcon}>
+          <Popup>
+            🧍 User ID: <b>{userId}</b>
+            <br />
+            🕒 Time: <b>{new Date().toLocaleString()}</b>
+          </Popup>
+        </Marker>
       </MapContainer>
     </div>
   );
 }
 
 export default App;
+
 
 
 
