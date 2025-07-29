@@ -1,7 +1,8 @@
 import { initializeApp } from "firebase/app";
-import {
+import { 
   initializeFirestore,
-  enableIndexedDbPersistence,
+  persistentLocalCache,
+  persistentMultipleTabManager
 } from "firebase/firestore";
 import {
   getAuth,
@@ -19,27 +20,17 @@ const firebaseConfig = {
   appId: "1:273472689918:web:cb2174eaf98264187777af",
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
+// Initialize Firestore with persistence
 const firestore = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
 });
 
-
-enableIndexedDbPersistence(firestore)
-  .then(() => {
-    console.log("✅ Offline persistence enabled");
-  })
-  .catch((err) => {
-    if (err.code === "failed-precondition") {
-      console.warn("❌ Offline persistence failed: multiple tabs open");
-    } else if (err.code === "unimplemented") {
-      console.warn("❌ Offline persistence not supported by browser");
-    } else {
-      console.error("❌ Offline persistence error:", err);
-    }
-  });
-
+// Initialize Authentication
 const auth = getAuth(app);
 
 export {
@@ -49,4 +40,3 @@ export {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
 };
-
