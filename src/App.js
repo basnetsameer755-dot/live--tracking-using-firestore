@@ -39,6 +39,7 @@ function App() {
   const lastLocation = useRef(null);
   const unsubscribes = useRef({});
 
+  // Track auth state & set status
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -62,11 +63,12 @@ function App() {
     return unsubscribe;
   }, []);
 
+  // Watch user position and add new points to Firestore
   useEffect(() => {
     if (!userId) return;
 
-    const MIN_DISTANCE = 2; 
-    const MIN_TIME = 1000; 
+    const MIN_DISTANCE = 2; // meters
+    const MIN_TIME = 1000; // milliseconds
 
     const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
@@ -96,8 +98,10 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userId]);
 
+  // Listen to all users' location trails
   useEffect(() => {
     const mainRef = collection(firestore, "livePaths");
+
     const unsubscribeMain = onSnapshot(mainRef, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const uid = change.doc.id;
@@ -185,6 +189,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
