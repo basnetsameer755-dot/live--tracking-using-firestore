@@ -1,16 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
-import {
-  collection,
-  doc,
-  addDoc,
-  setDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  serverTimestamp,
-} from "firebase/firestore";
-import { firestore, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
@@ -20,7 +9,12 @@ const userIcon = new L.Icon({
   iconAnchor: [15, 15],
 });
 
-// Haversine distance in meters
+const currentUserIcon = new L.Icon({
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/64/64113.png",
+  iconSize: [30, 30],
+  iconAnchor: [15, 15],
+});
+
 function getDistance(loc1, loc2) {
   const R = 6371e3;
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -28,272 +22,149 @@ function getDistance(loc1, loc2) {
   const dLng = toRad(loc2.lng - loc1.lng);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(loc1.lat)) *
-      Math.cos(toRad(loc2.lat)) *
-      Math.sin(dLng / 2) ** 2;
+    Math.cos(toRad(loc1.lat)) * Math.cos(toRad(loc2.lat)) * Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
 
-// Reverse geocode: lat,lng → address string
-async function getAddress(lat, lng) {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`
-    );
-    const data = await res.json();
-    return data.display_name || "Unknown location";
-  } catch (error) {
-    console.error("Reverse geocoding error:", error);
-    return "Address not found";
-  }
-}
-
 function App() {
-  const [userId, setUserId] = useState(null);
   const [currentPosition, setCurrentPosition] = useState(null);
-  const [userPaths, setUserPaths] = useState({});
-  const [authChecked, setAuthChecked] = useState(false);
+  const [currentTimestamp, setCurrentTimestamp] = useState(null);
+  const [manualTrail, setManualTrail] = useState([]);
+  const [inputLat, setInputLat] = useState("");
+  const [inputLng, setInputLng] = useState("");
   const lastLocation = useRef(null);
-  const appStartTime = useRef(Date.now());
 
-  // Manual lat/lng input state
-  const [manualLat, setManualLat] = useState("");
-  const [manualLng, setManualLng] = useState("");
-  const [manualMarker, setManualMarker] = useState(null);
-
-  // Auth state listener + status update
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setUserId(user.uid);
-        try {
-          const statusRef = doc(firestore, "status", user.uid);
-          await setDoc(
-            statusRef,
-            {
-              email: user.email,
-              online: true,
-              lastOnline: serverTimestamp(),
-            },
-            { merge: true }
-          );
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser");
+      return;
+    }
 
-          window.addEventListener("beforeunload", () => {
-            setDoc(
-              statusRef,
-              {
-                online: false,
-                lastOnline: serverTimestamp(),
-              },
-              { merge: true }
-            );
-          });
-        } catch (error) {
-          console.error("Error updating status:", error);
-        }
-        setAuthChecked(true);
-      } else {
-        window.location.href = "/login";
-      }
-    });
-    return unsubscribe;
-  }, []);
-
-  // Watch device GPS and push location updates
-  useEffect(() => {
-    if (!userId || !authChecked) return;
-
-    const MIN_DISTANCE = 2; // meters
-    const MIN_TIME = 1000; // ms
+    const MIN_DISTANCE = 2;
+    const MIN_TIME = 1000;
 
     const watchId = navigator.geolocation.watchPosition(
-      async (pos) => {
+      (pos) => {
         const { latitude, longitude } = pos.coords;
         const now = Date.now();
 
         if (lastLocation.current) {
-          const dist = getDistance(lastLocation.current, {
-            lat: latitude,
-            lng: longitude,
-          });
+          const dist = getDistance(lastLocation.current, { lat: latitude, lng: longitude });
           const timeDiff = now - lastLocation.current.time;
           if (dist < MIN_DISTANCE && timeDiff < MIN_TIME) return;
         }
 
         lastLocation.current = { lat: latitude, lng: longitude, time: now };
         setCurrentPosition([latitude, longitude]);
-
-        try {
-          await addDoc(collection(firestore, "locations"), {
-            userId,
-            lat: latitude,
-            lng: longitude,
-            timestamp: new Date(),
-          });
-        } catch (error) {
-          console.error("Error adding location:", error);
-        }
+        setCurrentTimestamp(new Date(now));
       },
-      (err) => console.error("Geolocation error:", err),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      (err) => {
+        console.error(err);
+        alert("Error getting location");
+      },
+      { enableHighAccuracy: true }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [userId, authChecked]);
+  }, []);
 
-  // Listen to locations and build paths, then get addresses for last points
-  useEffect(() => {
-    if (!authChecked) return;
+  function handleAddLocation() {
+    const lat = parseFloat(inputLat);
+    const lng = parseFloat(inputLng);
 
-    const q = query(collection(firestore, "locations"), orderBy("timestamp"));
+    if (isNaN(lat) || isNaN(lng)) {
+      alert("Please enter valid latitude and longitude");
+      return;
+    }
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const paths = {};
-        snapshot.docs.forEach((doc) => {
-          const data = doc.data();
-          if (!data.userId) return;
-
-          if (data.timestamp?.toDate) {
-            const ts = data.timestamp.toDate().getTime();
-            if (ts < appStartTime.current) return;
-          }
-
-          if (!paths[data.userId]) {
-            paths[data.userId] = [];
-          }
-
-          paths[data.userId].push({
-            lat: data.lat,
-            lng: data.lng,
-            timestamp: data.timestamp?.toDate() || new Date(),
-            address: null,
-          });
-        });
-
-        const fetchAddresses = async () => {
-          const updatedPaths = { ...paths };
-          for (const uid in updatedPaths) {
-            const trail = updatedPaths[uid];
-            const last = trail[trail.length - 1];
-            if (last && !last.address) {
-              last.address = await getAddress(last.lat, last.lng);
-            }
-          }
-          setUserPaths(updatedPaths);
-        };
-
-        fetchAddresses();
-      },
-      (error) => {
-        console.error("Firestore error:", error);
-      }
-    );
-
-    return unsubscribe;
-  }, [authChecked]);
-
-  if (!authChecked) {
-    return <div style={{ padding: 20 }}>Checking authentication...</div>;
+    setManualTrail((prev) => [
+      ...prev,
+      { lat, lng, timestamp: new Date() }
+    ]);
+    setInputLat("");
+    setInputLng("");
   }
 
-  if (!currentPosition) {
-    return <div style={{ padding: 20 }}>Waiting for GPS location...</div>;
+  // Handle dragging manual markers to update their location and timestamp
+  function onManualMarkerDrag(index, event) {
+    const { lat, lng } = event.target.getLatLng();
+    setManualTrail((prev) => {
+      const updated = [...prev];
+      updated[index] = { lat, lng, timestamp: new Date() };
+      return updated;
+    });
   }
+
+  const mapCenter =
+    currentPosition ||
+    (manualTrail.length > 0
+      ? [manualTrail[manualTrail.length - 1].lat, manualTrail[manualTrail.length - 1].lng]
+      : [27.7, 85.3]);
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      {/* Manual Lat/Lng Input */}
-      <div
-        style={{
-          padding: "10px",
-          background: "#f0f0f0",
-          position: "absolute",
-          top: 10,
-          left: 10,
-          zIndex: 1000,
-          borderRadius: 8,
-          boxShadow: "0 0 5px rgba(0,0,0,0.2)",
-        }}
-      >
-        <label>Latitude: </label>
+      <div style={{ padding: 10, backgroundColor: "#eee" }}>
         <input
-          type="text"
-          value={manualLat}
-          onChange={(e) => setManualLat(e.target.value)}
-          style={{ marginRight: "10px", width: "100px" }}
+          placeholder="Latitude"
+          value={inputLat}
+          onChange={(e) => setInputLat(e.target.value)}
+          style={{ marginRight: 5 }}
         />
-        <label>Longitude: </label>
         <input
-          type="text"
-          value={manualLng}
-          onChange={(e) => setManualLng(e.target.value)}
-          style={{ marginRight: "10px", width: "100px" }}
+          placeholder="Longitude"
+          value={inputLng}
+          onChange={(e) => setInputLng(e.target.value)}
+          style={{ marginRight: 5 }}
         />
-        <button
-          onClick={async () => {
-            const lat = parseFloat(manualLat);
-            const lng = parseFloat(manualLng);
-            if (isNaN(lat) || isNaN(lng)) {
-              alert("Please enter valid numbers for latitude and longitude");
-              return;
-            }
-            const address = await getAddress(lat, lng);
-            setManualMarker({ lat, lng, address });
-          }}
-        >
-          Show Location
-        </button>
+        <button onClick={handleAddLocation}>Add Location</button>
       </div>
 
-      <MapContainer
-        center={currentPosition}
-        zoom={16}
-        style={{ height: "100%", width: "100%" }}
-        scrollWheelZoom
-      >
+      <MapContainer center={mapCenter} zoom={16} style={{ height: "90%", width: "100%" }} scrollWheelZoom>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
-        {/* Existing tracked users */}
-        {Object.entries(userPaths).map(([uid, trail]) => {
-          const validTrail = trail.filter((p) => p.lat && p.lng);
-          if (validTrail.length < 1) return null;
-
-          const last = validTrail[validTrail.length - 1];
-          return (
-            <React.Fragment key={uid}>
-              <Marker position={[last.lat, last.lng]} icon={userIcon}>
-                <Popup>
-                  🧍 User ID: <b>{uid}</b>
-                  <br />
-                  🕒 Time: {last.timestamp?.toLocaleString() || "Loading..."}
-                  <br />
-                  📍 Address: {last.address || "Loading address..."}
-                </Popup>
-              </Marker>
-              {validTrail.length > 1 && (
-                <Polyline
-                  positions={validTrail.map((p) => [p.lat, p.lng])}
-                  color="red"
-                  weight={3}
-                  opacity={0.8}
-                />
-              )}
-            </React.Fragment>
-          );
-        })}
-
-        {/* Manual marker from input */}
-        {manualMarker && (
-          <Marker position={[manualMarker.lat, manualMarker.lng]} icon={userIcon}>
+        {/* Current position marker */}
+        {currentPosition && currentTimestamp && (
+          <Marker position={currentPosition} icon={currentUserIcon} draggable={false}>
             <Popup>
-              📍 Manually entered location:
+              Latitude: {currentPosition[0].toFixed(6)}
               <br />
-              {manualMarker.address}
+              Longitude: {currentPosition[1].toFixed(6)}
+              <br />
+              Time: {currentTimestamp.toLocaleString()}
             </Popup>
           </Marker>
+        )}
+
+        {/* Manual markers - draggable and update on move */}
+        {manualTrail.map((pos, idx) => (
+          <Marker
+            key={idx}
+            position={[pos.lat, pos.lng]}
+            icon={userIcon}
+            draggable={true}
+            eventHandlers={{
+              dragend: (event) => onManualMarkerDrag(idx, event),
+            }}
+          >
+            <Popup>
+              Latitude: {pos.lat.toFixed(6)}
+              <br />
+              Longitude: {pos.lng.toFixed(6)}
+              <br />
+              Time: {pos.timestamp.toLocaleString()}
+            </Popup>
+          </Marker>
+        ))}
+
+        {/* Draw polyline connecting manual markers */}
+        {manualTrail.length > 1 && (
+          <Polyline
+            positions={manualTrail.map((p) => [p.lat, p.lng])}
+            color="red"
+            weight={3}
+            opacity={0.8}
+          />
         )}
       </MapContainer>
     </div>

@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+/*import { initializeApp } from "firebase/app";
 import { 
   initializeFirestore,
   persistentLocalCache,
@@ -39,4 +39,4 @@ export {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
-};
+};        */
