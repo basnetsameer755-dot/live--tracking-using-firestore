@@ -8,7 +8,7 @@ import {
   onSnapshot,
   query,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
 } from "firebase/firestore";
 import { firestore, auth, onAuthStateChanged } from "./firebase";
 import "leaflet/dist/leaflet.css";
@@ -39,23 +39,34 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const lastLocation = useRef(null);
 
+  // Save the app start time so we filter points client-side
+  const appStartTime = useRef(Date.now());
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setUserId(user.uid);
         try {
           const statusRef = doc(firestore, "status", user.uid);
-          await setDoc(statusRef, {
-            email: user.email,
-            online: true,
-            lastOnline: serverTimestamp(),
-          }, { merge: true });
-          
-          window.addEventListener("beforeunload", () => {
-            setDoc(statusRef, {
-              online: false,
+          await setDoc(
+            statusRef,
+            {
+              email: user.email,
+              online: true,
               lastOnline: serverTimestamp(),
-            }, { merge: true });
+            },
+            { merge: true }
+          );
+
+          window.addEventListener("beforeunload", () => {
+            setDoc(
+              statusRef,
+              {
+                online: false,
+                lastOnline: serverTimestamp(),
+              },
+              { merge: true }
+            );
           });
         } catch (error) {
           console.error("Error updating status:", error);
@@ -93,7 +104,7 @@ function App() {
             userId,
             lat: latitude,
             lng: longitude,
-            timestamp: serverTimestamp()
+            timestamp: new Date(), // client timestamp
           });
         } catch (error) {
           console.error("Error adding location:", error);
@@ -109,26 +120,30 @@ function App() {
   useEffect(() => {
     if (!authChecked) return;
 
-    const q = query(
-      collection(firestore, "locations"),
-      orderBy("timestamp")
-    );
+    const q = query(collection(firestore, "locations"), orderBy("timestamp"));
 
-    const unsubscribe = onSnapshot(q, 
+    const unsubscribe = onSnapshot(
+      q,
       (snapshot) => {
         const paths = {};
         snapshot.docs.forEach((doc) => {
           const data = doc.data();
           if (!data.userId) return;
-          
+
+          // Filter points client-side by session start time
+          if (data.timestamp?.toDate) {
+            const ts = data.timestamp.toDate().getTime();
+            if (ts < appStartTime.current) return; // skip old points
+          }
+
           if (!paths[data.userId]) {
             paths[data.userId] = [];
           }
-          
+
           paths[data.userId].push({
             lat: data.lat,
             lng: data.lng,
-            timestamp: data.timestamp?.toDate?.() || new Date()
+            timestamp: data.timestamp?.toDate() || new Date(),
           });
         });
         setUserPaths(paths);
@@ -151,21 +166,16 @@ function App() {
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
-      <MapContainer 
-        center={currentPosition} 
-        zoom={16} 
-        style={{ height: "100%", width: "100%" }}
-        scrollWheelZoom
-      >
+      <MapContainer center={currentPosition} zoom={16} style={{ height: "100%", width: "100%" }} scrollWheelZoom>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {Object.entries(userPaths).map(([uid, trail]) => {
-          const validTrail = trail.filter(p => p.lat && p.lng);
+          const validTrail = trail.filter((p) => p.lat && p.lng);
           if (validTrail.length < 1) return null;
-          
+
           const last = validTrail[validTrail.length - 1];
           const isCurrentUser = uid === userId;
-          
+
           return (
             <React.Fragment key={uid}>
               <Marker position={[last.lat, last.lng]} icon={userIcon}>
@@ -173,17 +183,11 @@ function App() {
                   🧍 User ID: <b>{uid}</b>
                   {isCurrentUser && <span> (You)</span>}
                   <br />
-                  🕒 Time:{" "}
-                  {last.timestamp?.toLocaleString?.() || "Loading..."}
+                  🕒 Time: {last.timestamp?.toLocaleString() || "Loading..."}
                 </Popup>
               </Marker>
               {validTrail.length > 1 && (
-                <Polyline
-                  positions={validTrail.map((p) => [p.lat, p.lng])}
-                  color="red"
-                  weight={3}
-                  opacity={0.8}
-                />
+                <Polyline positions={validTrail.map((p) => [p.lat, p.lng])} color="red" weight={3} opacity={0.8} />
               )}
             </React.Fragment>
           );
@@ -194,7 +198,6 @@ function App() {
 }
 
 export default App;
-
 
 
 
